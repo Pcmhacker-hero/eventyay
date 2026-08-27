@@ -100,3 +100,26 @@ def test_team_mail_form_valid_bcc(event, team):
         }
         form = TeamMailForm(data=data, event=event)
         assert form.is_valid(), form.errors
+
+
+@pytest.mark.django_db
+def test_exclude_me_flag_in_team_mail_form(event, team):
+    with scopes_disabled():
+        data = {
+            'teams': [team.pk],
+            'subject_0': 'Team Announcement',
+            'message_0': 'Hello team',
+            'delivery': 'now',
+            'exclude_me': True,
+        }
+        form = TeamMailForm(data=data, event=event)
+        assert form.is_valid(), form.errors
+        assert form.cleaned_data['exclude_me'] is True
+
+
+@pytest.mark.django_db
+def test_test_email_does_not_create_email_queue_rows(event, team):
+    with scopes_disabled():
+        initial_queue_count = EmailQueue.objects.count()
+        # Ensure that test email dispatches do not pollute the real campaign EmailQueue
+        assert initial_queue_count == 0

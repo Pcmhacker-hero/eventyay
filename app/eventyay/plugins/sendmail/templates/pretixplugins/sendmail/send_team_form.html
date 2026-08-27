@@ -234,7 +234,7 @@
                         </thead>
                         <tbody>
                             {% for rec in team_recipients %}
-                                <tr>
+                                <tr class="recipient-row" data-team-id="{{ rec.team_id }}" data-email="{{ rec.email|lower }}">
                                     <td><strong>{{ rec.name }}</strong></td>
                                     <td><code>{{ rec.email }}</code></td>
                                     <td><span class="label label-default">{{ rec.team }}</span></td>
@@ -242,10 +242,10 @@
                                     <td><span class="label label-success">{{ rec.status }}</span></td>
                                 </tr>
                             {% empty %}
-                                <tr>
-                                    <td colspan="5" class="text-muted text-center">{% translate "No recipients match the current team filters." %}</td>
-                                </tr>
                             {% endfor %}
+                            <tr id="no-recipients-row" style="display: none;">
+                                <td colspan="5" class="text-muted text-center">{% translate "No recipients match the current team filters." %}</td>
+                            </tr>
                         </tbody>
                     </table>
                 </div>
@@ -309,6 +309,54 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
+    // Dynamic Recipient Count & Modal Filtering
+    const teamCheckboxes = document.querySelectorAll('input[name="teams"]');
+    const excludeMeCheckbox = document.querySelector('input[name="exclude_me"]');
+    const recipientBadge = document.getElementById('recipient-count-display');
+    const footerBadge = document.getElementById('footer-count-display');
+    const currentUserEmail = '{{ current_user_email }}';
+
+    function updateRecipientAudience() {
+        const checkedTeamIds = Array.from(document.querySelectorAll('input[name="teams"]:checked')).map(cb => cb.value);
+        const excludeMe = excludeMeCheckbox ? excludeMeCheckbox.checked : false;
+        
+        const seenEmails = new Set();
+        let count = 0;
+        
+        document.querySelectorAll('.recipient-row').forEach(row => {
+            const teamId = row.getAttribute('data-team-id');
+            const email = row.getAttribute('data-email');
+            
+            let visible = checkedTeamIds.includes(teamId);
+            if (excludeMe && currentUserEmail && email === currentUserEmail) {
+                visible = false;
+            }
+            if (visible && seenEmails.has(email)) {
+                // Duplicate address from multiple teams
+                visible = false;
+            }
+            if (visible) {
+                seenEmails.add(email);
+                count++;
+                row.style.display = '';
+            } else {
+                row.style.display = 'none';
+            }
+        });
+        
+        if (recipientBadge) recipientBadge.textContent = count;
+        if (footerBadge) footerBadge.textContent = count;
+        
+        const emptyRow = document.getElementById('no-recipients-row');
+        if (emptyRow) {
+            emptyRow.style.display = count === 0 ? '' : 'none';
+        }
+    }
+
+    teamCheckboxes.forEach(cb => cb.addEventListener('change', updateRecipientAudience));
+    if (excludeMeCheckbox) excludeMeCheckbox.addEventListener('change', updateRecipientAudience);
+    updateRecipientAudience();
+
     // Toggle schedule fields based on delivery option
     const deliveryInputs = document.querySelectorAll('input[name="delivery"]');
     const schedulingDetails = document.getElementById('scheduling-details');
@@ -325,6 +373,24 @@ document.addEventListener('DOMContentLoaded', function() {
     deliveryInputs.forEach(input => input.addEventListener('change', updateDeliveryVisibility));
     updateDeliveryVisibility();
 
+    // Placeholder Focus & Cursor Tracking
+    let lastFocusedField = null;
+    let lastSelectionStart = null;
+    let lastSelectionEnd = null;
+
+    function trackField(field) {
+        lastFocusedField = field;
+        lastSelectionStart = field.selectionStart;
+        lastSelectionEnd = field.selectionEnd;
+    }
+
+    document.querySelectorAll('input[name^="subject"], textarea[name^="message"]').forEach(field => {
+        field.addEventListener('focus', () => trackField(field));
+        field.addEventListener('blur', () => trackField(field));
+        field.addEventListener('keyup', () => trackField(field));
+        field.addEventListener('click', () => trackField(field));
+    });
+
     // Placeholder Search Filter
     const searchInput = document.getElementById('placeholderSearch');
     if (searchInput) {
@@ -337,22 +403,21 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // Insert placeholder click handler
+    // Insert placeholder click handler with restored cursor position
     document.querySelectorAll('.placeholder-item').forEach(function(item) {
         item.addEventListener('click', function() {
             const key = this.getAttribute('data-key');
-            const activeInput = document.activeElement;
-            const messageField = document.querySelector('textarea[name^="message"]') || document.querySelector('input[name^="subject"]');
-            
-            const target = (activeInput && (activeInput.tagName === 'INPUT' || activeInput.tagName === 'TEXTAREA')) ? activeInput : messageField;
+            const target = lastFocusedField || document.querySelector('textarea[name^="message"]') || document.querySelector('input[name^="subject"]');
             
             if (target) {
-                const start = target.selectionStart || target.value.length;
-                const end = target.selectionEnd || target.value.length;
+                const start = (lastSelectionStart !== null && lastFocusedField === target) ? lastSelectionStart : target.value.length;
+                const end = (lastSelectionEnd !== null && lastFocusedField === target) ? lastSelectionEnd : target.value.length;
                 const val = target.value;
                 target.value = val.substring(0, start) + key + val.substring(end);
                 target.focus();
-                target.selectionStart = target.selectionEnd = start + key.length;
+                const newPos = start + key.length;
+                target.selectionStart = target.selectionEnd = newPos;
+                lastSelectionStart = lastSelectionEnd = newPos;
             }
             $('#placeholderModal').modal('hide');
         });

@@ -569,12 +569,14 @@ class ComposeTeamsMail(EventPermissionRequiredMixin, CopyDraftMixin, BulkReplyTo
                     recipients.append({
                         'name': member.get_full_name() or member.email,
                         'email': member.email,
+                        'team_id': str(team.pk),
                         'team': team.name,
                         'role': _('Administrator') if team.can_change_event_settings else _('Member'),
                         'status': _('Active') if member.is_active else _('Inactive'),
                     })
         ctx['team_recipients'] = recipients
         ctx['total_recipients'] = len(recipients)
+        ctx['current_user_email'] = (self.request.user.email or '').strip().lower() if self.request.user.is_authenticated else ''
         ctx['placeholders'] = {
             'user': [
                 {'key': '{name}', 'label': _('Recipient name'), 'sample': 'Jane Doe'},
@@ -647,14 +649,36 @@ class ComposeTeamsMail(EventPermissionRequiredMixin, CopyDraftMixin, BulkReplyTo
                 return self.get(self.request, *self.args, **self.kwargs)
 
             sender = form.cleaned_data.get('reply_to') or self._get_reply_to_for_bulk_email() or ''
+            context_dict = build_email_preview_context(event, ['event', 'team'])
+
+            try:
+                test_subject = nh3.clean(
+                    subject.localize(event.settings.locale).format_map(context_dict),
+                    tags=set(),
+                )
+            except Exception:
+                test_subject = subject.localize(event.settings.locale)
+
+            try:
+                test_message = expand_email_variable_chips(
+                    message.localize(event.settings.locale).format_map(context_dict),
+                    dict(context_dict),
+                )
+            except Exception:
+                test_message = message.localize(event.settings.locale)
+
+            attachment_file = form.cleaned_data.get('attachment')
+            attach_files = [attachment_file] if attachment_file else None
+
             try:
                 mail(
                     test_address,
-                    subject.localize(event.settings.locale),
-                    message.localize(event.settings.locale),
+                    test_subject,
+                    test_message,
                     event=event,
                     locale=event.settings.locale,
                     headers={'Reply-To': sender} if sender else {},
+                    attach_cached_files=attach_files,
                 )
                 messages.success(self.request, _('Test email sent to {email}.').format(email=test_address))
             except Exception as e:
