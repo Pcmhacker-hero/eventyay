@@ -463,8 +463,15 @@ def test_delete_used_room(orga_client, event, room, slot):
     assert slot.room == room
     response = orga_client.get(room.urls.delete, follow=True)
     assert response.status_code == 200
+    assert "Warning: This room currently has 1 scheduled session(s) linked to it." in response.text
     with scope(event=event):
         assert event.rooms.count() == 1
+    response = orga_client.post(room.urls.delete, follow=True)
+    assert response.status_code == 200
+    with scope(event=event):
+        assert event.rooms.count() == 0
+        slot.refresh_from_db()
+        assert slot.room is None
 
 
 @pytest.mark.django_db
