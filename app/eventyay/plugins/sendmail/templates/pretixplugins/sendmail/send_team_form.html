@@ -1,6 +1,7 @@
 {% extends "pretixcontrol/event/base.html" %}
 {% load i18n %}
 {% load bootstrap3 %}
+{% load static %}
 
 {% block title %}{% translate "Email editor" %}{% endblock %}
 
@@ -9,74 +10,174 @@
     <div class="navigation">
         <div class="navigation-title nav-title-group">
             <h1>{% translate "Email editor" %}</h1>
-            <p class='text-muted nav-subtitle'>{% translate "Team members" %}</p>
+            <p class='text-muted nav-subtitle'>
+                {% translate "Team members" %}
+                <i class="fa fa-info-circle text-muted" title="{% translate "Send an email to your team members." %}" data-toggle="tooltip"></i>
+            </p>
         </div>
         {% include "pretixcontrol/event/component_link.html" %}
     </div>
 </nav>
 
-<form class="form-horizontal" method="post" enctype="multipart/form-data">
+<form class="single-page-composer" method="post" enctype="multipart/form-data">
     {% csrf_token %}
     {% bootstrap_form_errors form %}
 
-    <div class="tabbed-form">
-        <!-- Recipients Section -->
-        <fieldset>
-            <legend>{% translate "Recipients" %}</legend>
-            {% bootstrap_form_errors form %}
-            {% bootstrap_field form.teams layout='horizontal' %}
-        </fieldset>
-
-        <!-- Content Section -->
-        <fieldset>
-            <legend>{% translate "Content" %}</legend>
-            {% bootstrap_form_errors form %}
-            {% bootstrap_field form.subject layout='horizontal' %}
-            <div class="form-group"
-                 data-email-preview-wrapper
-                 data-email-preview-url="{% url 'control:event.editor.email.preview' organizer=request.event.organizer.slug event=request.event.slug %}">
-                <label class="col-md-3 control-label" for="{{ form.message.id_for_label }}">{{ form.message.label }}</label>
-                <div class="col-md-9">
-                    <ul class="nav nav-tabs" role="tablist">
-                        <li role="presentation" class="active">
-                            <a data-toggle="tab" href="#team_message_edit">
-                                <i class="fa fa-pencil-square-o fa-fw"></i> {% translate "Edit" %}
-                            </a>
-                        </li>
-                        <li role="presentation">
-                            <a data-toggle="tab" href="#team_message_preview" data-email-preview-tab>
-                                <i class="fa fa-tv fa-fw"></i> {% translate "Preview" %}
-                            </a>
-                        </li>
-                    </ul>
-                    <div class="tab-content">
-                        <div id="team_message_edit" class="tab-pane fade in active">
-                            {% bootstrap_field form.message show_label=False form_group_class="" %}
-                        </div>
-                        <div id="team_message_preview" class="tab-pane">
-                            <div class="mail-preview-group">
-                                {% for locale in request.event.settings.locales %}
-                                    <div lang="{{ locale }}" class="mail-preview well"></div>
-                                {% endfor %}
-                            </div>
+    <!-- Audience Section -->
+    <section class="panel panel-default composer-section">
+        <div class="panel-heading">
+            <div class="row align-items-center">
+                <div class="col-xs-6">
+                    <h3 class="panel-title" style="font-size: 16px; font-weight: bold;">{% translate "Audience" %}</h3>
+                </div>
+                <div class="col-xs-6 text-right">
+                    <span class="badge badge-info" style="font-size: 13px; padding: 6px 10px;">
+                        <span id="recipient-count-display">{{ total_recipients }}</span> {% translate "recipients selected" %}
+                    </span>
+                </div>
+            </div>
+        </div>
+        <div class="panel-body">
+            <div class="row">
+                <div class="col-md-7">
+                    {% bootstrap_field form.teams layout='vertical' %}
+                </div>
+                <div class="col-md-5">
+                    <div class="form-group">
+                        <label class="control-label" style="display: block;">{% translate "Recipient options" %}</label>
+                        <div class="checkbox" style="margin-top: 10px;">
+                            <label>
+                                {{ form.exclude_me }} {{ form.exclude_me.label }}
+                            </label>
                         </div>
                     </div>
                 </div>
             </div>
-            {% bootstrap_field form.attachment layout='horizontal' %}
-        </fieldset>
+            <hr style="margin: 15px 0;">
+            <div class="audience-actions">
+                <button type="button" class="btn btn-default btn-sm" data-toggle="modal" data-target="#teamRecipientModal">
+                    <i class="fa fa-users"></i> {% translate "Show recipient list" %}
+                </button>
+            </div>
+        </div>
+    </section>
 
-        <!-- Scheduling Section -->
-        <fieldset>
-            <legend>{% translate "Scheduling" %}</legend>
-            {% bootstrap_field form.scheduled_at layout='horizontal' %}
-        </fieldset>
-    </div>
+    <!-- Reply-To / BCC Section -->
+    <section class="panel panel-default composer-section">
+        <div class="panel-heading">
+            <h3 class="panel-title" style="font-size: 16px; font-weight: bold;">{% translate "Sender settings" %}</h3>
+        </div>
+        <div class="panel-body">
+            <div class="row">
+                <div class="col-md-6">
+                    {% bootstrap_field form.reply_to layout='vertical' %}
+                </div>
+                <div class="col-md-6">
+                    {% bootstrap_field form.bcc layout='vertical' %}
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Message Section -->
+    <section class="panel panel-default composer-section">
+        <div class="panel-heading">
+            <div class="row align-items-center">
+                <div class="col-xs-6">
+                    <h3 class="panel-title" style="font-size: 16px; font-weight: bold;">{% translate "Message" %}</h3>
+                </div>
+                <div class="col-xs-6 text-right">
+                    <button type="button" class="btn btn-default btn-sm" data-toggle="modal" data-target="#placeholderModal">
+                        <i class="fa fa-code"></i> {% translate "Insert placeholder" %}
+                    </button>
+                </div>
+            </div>
+        </div>
+        <div class="panel-body">
+            {% bootstrap_field form.subject layout='vertical' %}
+
+            <div class="form-group"
+                 data-email-preview-wrapper
+                 data-email-preview-url="{% url 'control:event.editor.email.preview' organizer=request.event.organizer.slug event=request.event.slug %}">
+                <label class="control-label" for="{{ form.message.id_for_label }}">{{ form.message.label }}</label>
+                <ul class="nav nav-tabs" role="tablist" style="margin-bottom: 10px;">
+                    <li role="presentation" class="active">
+                        <a data-toggle="tab" href="#team_message_edit">
+                            <i class="fa fa-pencil-square-o fa-fw"></i> {% translate "Edit" %}
+                        </a>
+                    </li>
+                    <li role="presentation">
+                        <a data-toggle="tab" href="#team_message_preview" data-email-preview-tab>
+                            <i class="fa fa-tv fa-fw"></i> {% translate "Preview" %}
+                        </a>
+                    </li>
+                </ul>
+                <div class="tab-content">
+                    <div id="team_message_edit" class="tab-pane fade in active">
+                        {% bootstrap_field form.message show_label=False form_group_class="" %}
+                    </div>
+                    <div id="team_message_preview" class="tab-pane">
+                        <div class="mail-preview-group">
+                            {% for locale in request.event.settings.locales %}
+                                <div lang="{{ locale }}" class="mail-preview well"></div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Attachment Section -->
+    <section class="panel panel-default composer-section">
+        <div class="panel-heading">
+            <h3 class="panel-title" style="font-size: 16px; font-weight: bold;">{% translate "Attachment" %}</h3>
+        </div>
+        <div class="panel-body">
+            {% bootstrap_field form.attachment layout='vertical' %}
+        </div>
+    </section>
+
+    <!-- Delivery Section -->
+    <section class="panel panel-default composer-section">
+        <div class="panel-heading">
+            <h3 class="panel-title" style="font-size: 16px; font-weight: bold;">{% translate "Delivery" %}</h3>
+        </div>
+        <div class="panel-body">
+            <div class="row">
+                <div class="col-md-6">
+                    {% bootstrap_field form.delivery layout='vertical' %}
+                    <div id="scheduling-details" style="display: none; margin-top: 10px;">
+                        {% bootstrap_field form.scheduled_at layout='vertical' %}
+                        <p class="help-block text-muted">
+                            <i class="fa fa-globe"></i> {% translate "Timezone:" %} <strong>{{ request.event.timezone }}</strong>
+                        </p>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <label class="control-label">{% translate "Send test email" %}</label>
+                    <div class="input-group">
+                        <input type="email" class="form-control" name="test_email_address" placeholder="{{ request.user.email|default:'name@example.com' }}">
+                        <span class="input-group-btn">
+                            <button type="submit" class="btn btn-default" name="action" value="test_email">
+                                <i class="fa fa-paper-plane"></i> {% translate "Send test" %}
+                            </button>
+                        </span>
+                    </div>
+                    <p class="help-block text-muted">
+                        {% translate "Test emails are sent immediately using sample data and are not queued or counted." %}
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
 
     {% if request.method == "POST" and output %}
-        <fieldset>
-            <legend>{% translate "E-mail preview" %}</legend>
-            <div class="tab-pane mail-preview-group">
+        <section class="panel panel-info composer-section">
+            <div class="panel-heading">
+                <h3 class="panel-title" style="font-size: 16px; font-weight: bold;">{% translate "E-mail preview" %}</h3>
+            </div>
+            <div class="panel-body mail-preview-group">
                 {% for locale, out in output.items %}
                     <div lang="{{ locale }}" class="mail-preview">
                         <strong>{{ out.subject|safe }}</strong><br><br>
@@ -84,16 +185,178 @@
                     </div>
                 {% endfor %}
             </div>
-        </fieldset>
+        </section>
     {% endif %}
 
-    <div class="form-group submit-group">
-        <button type="submit" class="btn btn-default btn-save" name="action" value="preview">
-            {% translate "Preview email" %}
-        </button>
-        <button type="submit" class="btn btn-primary btn-save">
-            {% translate "Send to outbox" %}
-        </button>
+    <!-- Action Area in Central Flow -->
+    <div class="panel panel-default" style="background: #f8f9fa; border: 1px solid #e9ecef; margin-top: 20px; border-radius: 4px;">
+        <div class="panel-body" style="padding: 15px;">
+            <div class="row align-items-center">
+                <div class="col-sm-4 text-muted">
+                    <span id="footer-count-display">{{ total_recipients }}</span> {% translate "recipients selected" %}
+                </div>
+                <div class="col-sm-8 text-right">
+                    <button type="submit" class="btn btn-default" name="action" value="draft" style="margin-right: 5px;">
+                        <i class="fa fa-save"></i> {% translate "Save draft" %}
+                    </button>
+                    <button type="submit" class="btn btn-default" name="action" value="preview" style="margin-right: 5px;">
+                        <i class="fa fa-eye"></i> {% translate "Preview email" %}
+                    </button>
+                    <button type="submit" class="btn btn-primary" name="action" value="send">
+                        <i class="fa fa-send"></i> {% translate "Send to outbox" %}
+                    </button>
+                </div>
+            </div>
+        </div>
     </div>
 </form>
+
+<!-- Recipient List Modal -->
+<div class="modal fade" id="teamRecipientModal" tabindex="-1" role="dialog" aria-labelledby="teamRecipientModalLabel">
+    <div class="modal-dialog modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+                <h4 class="modal-title" id="teamRecipientModalLabel"><i class="fa fa-users"></i> {% translate "Recipient list preview" %}</h4>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted">{% translate "Below is the list of team members who will receive this email based on current selection." %}</p>
+                <div class="table-responsive">
+                    <table class="table table-striped table-hover">
+                        <thead>
+                            <tr>
+                                <th>{% translate "Name" %}</th>
+                                <th>{% translate "Email" %}</th>
+                                <th>{% translate "Team" %}</th>
+                                <th>{% translate "Role" %}</th>
+                                <th>{% translate "Status" %}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for rec in team_recipients %}
+                                <tr>
+                                    <td><strong>{{ rec.name }}</strong></td>
+                                    <td><code>{{ rec.email }}</code></td>
+                                    <td><span class="label label-default">{{ rec.team }}</span></td>
+                                    <td>{{ rec.role }}</td>
+                                    <td><span class="label label-success">{{ rec.status }}</span></td>
+                                </tr>
+                            {% empty %}
+                                <tr>
+                                    <td colspan="5" class="text-muted text-center">{% translate "No recipients match the current team filters." %}</td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-default" data-dismiss="modal">{% translate "Close" %}</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Placeholder Modal / Drawer -->
+<div class="modal fade" id="placeholderModal" tabindex="-1" role="dialog" aria-labelledby="placeholderModalLabel">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+                <h4 class="modal-title" id="placeholderModalLabel"><i class="fa fa-code"></i> {% translate "Insert placeholder" %}</h4>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <input type="text" class="form-control" id="placeholderSearch" placeholder="{% translate "Search placeholders..." %}">
+                </div>
+                
+                <h5 style="font-weight: bold; margin-top: 15px;">{% translate "User" %}</h5>
+                <div class="list-group placeholder-group">
+                    {% for p in placeholders.user %}
+                        <a href="javascript:void(0)" class="list-group-item placeholder-item" data-key="{{ p.key }}">
+                            <strong>{{ p.key }}</strong> &mdash; {{ p.label }}
+                            <span class="text-muted pull-right"><em>{{ p.sample }}</em></span>
+                        </a>
+                    {% endfor %}
+                </div>
+
+                <h5 style="font-weight: bold; margin-top: 15px;">{% translate "Event" %}</h5>
+                <div class="list-group placeholder-group">
+                    {% for p in placeholders.event %}
+                        <a href="javascript:void(0)" class="list-group-item placeholder-item" data-key="{{ p.key }}">
+                            <strong>{{ p.key }}</strong> &mdash; {{ p.label }}
+                            <span class="text-muted pull-right"><em>{{ p.sample }}</em></span>
+                        </a>
+                    {% endfor %}
+                </div>
+
+                <h5 style="font-weight: bold; margin-top: 15px;">{% translate "System" %}</h5>
+                <div class="list-group placeholder-group">
+                    {% for p in placeholders.system %}
+                        <a href="javascript:void(0)" class="list-group-item placeholder-item" data-key="{{ p.key }}">
+                            <strong>{{ p.key }}</strong> &mdash; {{ p.label }}
+                            <span class="text-muted pull-right"><em>{{ p.sample }}</em></span>
+                        </a>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-default" data-dismiss="modal">{% translate "Close" %}</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Toggle schedule fields based on delivery option
+    const deliveryInputs = document.querySelectorAll('input[name="delivery"]');
+    const schedulingDetails = document.getElementById('scheduling-details');
+    
+    function updateDeliveryVisibility() {
+        const selected = document.querySelector('input[name="delivery"]:checked');
+        if (selected && selected.value === 'later') {
+            schedulingDetails.style.display = 'block';
+        } else {
+            schedulingDetails.style.display = 'none';
+        }
+    }
+    
+    deliveryInputs.forEach(input => input.addEventListener('change', updateDeliveryVisibility));
+    updateDeliveryVisibility();
+
+    // Placeholder Search Filter
+    const searchInput = document.getElementById('placeholderSearch');
+    if (searchInput) {
+        searchInput.addEventListener('input', function() {
+            const query = this.value.toLowerCase();
+            document.querySelectorAll('.placeholder-item').forEach(function(item) {
+                const text = item.textContent.toLowerCase();
+                item.style.display = text.includes(query) ? 'block' : 'none';
+            });
+        });
+    }
+
+    // Insert placeholder click handler
+    document.querySelectorAll('.placeholder-item').forEach(function(item) {
+        item.addEventListener('click', function() {
+            const key = this.getAttribute('data-key');
+            const activeInput = document.activeElement;
+            const messageField = document.querySelector('textarea[name^="message"]') || document.querySelector('input[name^="subject"]');
+            
+            const target = (activeInput && (activeInput.tagName === 'INPUT' || activeInput.tagName === 'TEXTAREA')) ? activeInput : messageField;
+            
+            if (target) {
+                const start = target.selectionStart || target.value.length;
+                const end = target.selectionEnd || target.value.length;
+                const val = target.value;
+                target.value = val.substring(0, start) + key + val.substring(end);
+                target.focus();
+                target.selectionStart = target.selectionEnd = start + key.length;
+            }
+            $('#placeholderModal').modal('hide');
+        });
+    });
+});
+</script>
 {% endblock %}

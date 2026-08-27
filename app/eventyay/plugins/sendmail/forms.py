@@ -606,6 +606,16 @@ class EmailQueueEditForm(ScheduledAtValidationMixin, forms.ModelForm):
 
 
 class TeamMailForm(ScheduledAtValidationMixin, forms.Form):
+    reply_to = forms.EmailField(
+        label=_('Reply-To'),
+        required=False,
+        help_text=_('Leave empty to use the organizer email.'),
+    )
+    bcc = forms.CharField(
+        label=_('BCC'),
+        required=False,
+        help_text=_('Comma-separated list of additional recipient addresses.'),
+    )
     attachment = CachedFileField(
         label=_('Attachment'),
         required=False,
@@ -616,9 +626,28 @@ class TeamMailForm(ScheduledAtValidationMixin, forms.Form):
         ),
         help_text=_(
             'Sending an attachment increases the chance of your email not arriving or being sorted into spam folders. '
-            'We recommend only using PDFs of no more than 2 MB in size.'
+            'We recommend only using PDFs of no more than 2 MB in size. Maximum file size: 10 MB.'
         ),
         max_size=settings.MAX_SIZE_CONFIG[SizeKey.UPLOAD_SIZE_ATTACHMENT],
+    )
+    exclude_me = forms.BooleanField(
+        label=_('Do not include me in recipients'),
+        required=False,
+    )
+    delivery = forms.ChoiceField(
+        label=_('Delivery'),
+        choices=[
+            ('now', _('Send now')),
+            ('later', _('Schedule for later')),
+        ],
+        initial='now',
+        widget=forms.RadioSelect,
+    )
+    scheduled_at = SplitDateTimeField(
+        widget=SplitDateTimePickerWidget(),
+        label=_('Scheduled for'),
+        required=False,
+        help_text=_('Time is interpreted in the event timezone.'),
     )
 
     def __init__(self, *args, **kwargs):
@@ -631,14 +660,12 @@ class TeamMailForm(ScheduledAtValidationMixin, forms.Form):
 
         team_placeholders = ['event', 'team']
         placeholder_names = sorted(get_available_placeholders(self.event, team_placeholders).keys())
-        placeholder_text = _("Available placeholders: ") + ', '.join(f"{{{key}}}" for key in placeholder_names)
 
         self.fields['subject'] = I18nFormField(
             label=_('Subject'),
             widget=I18nTextInput,
             required=True,
             locales=locales,
-            help_text=placeholder_text
         )
         self.fields['message'] = I18nEmailBodyFormField(
             label=_('Message'),
@@ -646,16 +673,33 @@ class TeamMailForm(ScheduledAtValidationMixin, forms.Form):
             widget_kwargs={'placeholders': placeholder_names},
             required=True,
             locales=locales,
-            help_text=placeholder_text,
         )
         self.fields['teams'] = forms.ModelMultipleChoiceField(
             queryset=Team.objects.filter(organizer=self.event.organizer),
             widget=forms.CheckboxSelectMultiple(attrs={'class': 'scrolling-multiple-choice'}),
-            label=_("Send to members of these teams")
+            label=_('Send to members of these teams'),
+            required=True,
         )
-        self.fields['scheduled_at'] = SplitDateTimeField(
-            widget=SplitDateTimePickerWidget(),
-            label=_('Send later'),
-            required=False,
-            help_text=_('Leave empty to send immediately. If set, the email will be sent at this time. Time is interpreted in the event timezone.'),
-        )
+        if not self.initial.get('teams'):
+            self.initial['teams'] = self.fields['teams'].queryset
+
+    def clean(self):
+        cleaned_data = super().clean()
+        delivery = cleaned_data.get('delivery', 'now')
+        scheduled_at = cleaned_data.get('scheduled_at')
+
+        if delivery == 'later' and not scheduled_at:
+            self.add_error('scheduled_at', _('Please specify a date and time when scheduling for later.'))
+        elif delivery == 'now':
+            cleaned_data['scheduled_at'] = None
+
+        if bcc := cleaned_data.get('bcc'):
+            from django.core.validators import EmailValidator
+            validator = EmailValidator()
+            for addr in [a.strip() for a in bcc.split(',') if a.strip()]:
+                try:
+                    validator(addr)
+                except ValidationError:
+                    self.add_error('bcc', _('Invalid email address in BCC: {email}').format(email=addr))
+
+        return cleaned_data

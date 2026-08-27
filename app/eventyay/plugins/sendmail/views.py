@@ -556,6 +556,44 @@ class ComposeTeamsMail(EventPermissionRequiredMixin, CopyDraftMixin, BulkReplyTo
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ctx['output'] = getattr(self, 'output', None)
+        event = self.request.event
+
+        # Resolve initial team recipients list
+        recipients = []
+        seen_emails = set()
+        for team in Team.objects.filter(organizer=event.organizer).prefetch_related('members'):
+            for member in team.members.all():
+                email = (member.email or '').strip().lower()
+                if email and email not in seen_emails:
+                    seen_emails.add(email)
+                    recipients.append({
+                        'name': member.get_full_name() or member.email,
+                        'email': member.email,
+                        'team': team.name,
+                        'role': _('Administrator') if team.can_change_event_settings else _('Member'),
+                        'status': _('Active') if member.is_active else _('Inactive'),
+                    })
+        ctx['team_recipients'] = recipients
+        ctx['total_recipients'] = len(recipients)
+        ctx['placeholders'] = {
+            'user': [
+                {'key': '{name}', 'label': _('Recipient name'), 'sample': 'Jane Doe'},
+                {'key': '{email}', 'label': _('Recipient email'), 'sample': 'jane@example.com'},
+                {'key': '{team_role}', 'label': _('Team role'), 'sample': 'Administrator'},
+                {'key': '{team_name}', 'label': _('Team name'), 'sample': 'Organizing Committee'},
+            ],
+            'event': [
+                {'key': '{event_name}', 'label': _('Event name'), 'sample': event.name},
+                {'key': '{event_slug}', 'label': _('Event slug'), 'sample': event.slug},
+                {'key': '{event_url}', 'label': _('Event URL'), 'sample': event.urls.event_url if hasattr(event, 'urls') else ''},
+                {'key': '{event_schedule_url}', 'label': _('Schedule URL'), 'sample': ''},
+            ],
+            'system': [
+                {'key': '{current_date}', 'label': _('Current date'), 'sample': now().strftime('%Y-%m-%d')},
+                {'key': '{current_year}', 'label': _('Current year'), 'sample': str(now().year)},
+                {'key': '{email_unsubscribe_url}', 'label': _('Unsubscribe link'), 'sample': 'https://...'},
+            ],
+        }
 
         return ctx
 
@@ -568,6 +606,7 @@ class ComposeTeamsMail(EventPermissionRequiredMixin, CopyDraftMixin, BulkReplyTo
         user = self.request.user
         subject = form.cleaned_data['subject']
         message = form.cleaned_data['message']
+        action = self.request.POST.get('action')
 
         self.output = {}
         for l in event.settings.locales:
@@ -592,20 +631,48 @@ class ComposeTeamsMail(EventPermissionRequiredMixin, CopyDraftMixin, BulkReplyTo
                     form.add_error('message', _('Invalid placeholder(s): {}').format(str(e)))
                     return self.form_invalid(form)
 
-                if self.request.POST.get('action') == 'preview':
+                if action == 'preview':
                     self.output[l] = {
                         'subject': _('Subject: {subject}').format(subject=subject_preview),
                         'html': compile_email_body(message_preview),
                     }
 
-        if self.request.POST.get('action') == 'preview':
+        if action == 'preview':
             return self.get(self.request, *self.args, **self.kwargs)
+
+        if action == 'test_email':
+            test_address = self.request.POST.get('test_email_address') or (user.email if user else None)
+            if not test_address:
+                messages.error(self.request, _('Please specify a valid test email address.'))
+                return self.get(self.request, *self.args, **self.kwargs)
+
+            sender = form.cleaned_data.get('reply_to') or self._get_reply_to_for_bulk_email() or ''
+            try:
+                mail(
+                    test_address,
+                    subject.localize(event.settings.locale),
+                    message.localize(event.settings.locale),
+                    event=event,
+                    locale=event.settings.locale,
+                    headers={'Reply-To': sender} if sender else {},
+                )
+                messages.success(self.request, _('Test email sent to {email}.').format(email=test_address))
+            except Exception as e:
+                logger.exception('Failed to send test email: %s', e)
+                messages.error(self.request, _('Failed to send test email: {error}').format(error=str(e)))
+            return self.get(self.request, *self.args, **self.kwargs)
+
+        exclude_me = form.cleaned_data.get('exclude_me', False)
+        current_user_email = (user.email or '').strip().lower() if user else None
 
         sent_emails = set()
         recipients_list = []
         for team in form.cleaned_data['teams']:
             for member in team.members.all():
-                if not member.email or member.email in sent_emails:
+                email = (member.email or '').strip().lower()
+                if not email or email in sent_emails:
+                    continue
+                if exclude_me and current_user_email and email == current_user_email:
                     continue
                 recipients_list.append({
                     "email": member.email,
@@ -616,15 +683,18 @@ class ComposeTeamsMail(EventPermissionRequiredMixin, CopyDraftMixin, BulkReplyTo
                     "sent": False,
                     "error": None
                 })
-
-                sent_emails.add(member.email)
+                sent_emails.add(email)
 
         if not recipients_list:
             messages.error(self.request, _('There are no valid recipients for the selected teams.'))
             return self.form_invalid(form)
 
         # Create the EmailQueue instance
-        scheduled_at = form.cleaned_data.get('scheduled_at')
+        delivery = form.cleaned_data.get('delivery', 'now')
+        scheduled_at = form.cleaned_data.get('scheduled_at') if delivery == 'later' else None
+        reply_to = form.cleaned_data.get('reply_to') or self._get_reply_to_for_bulk_email() or ''
+        bcc = form.cleaned_data.get('bcc') or event.settings.get('mail_bcc')
+
         mail_instance = EmailQueue.objects.create(
             event=event,
             user=user,
@@ -632,8 +702,8 @@ class ComposeTeamsMail(EventPermissionRequiredMixin, CopyDraftMixin, BulkReplyTo
             subject=subject.data,
             message=message.data,
             locale=event.settings.locale,
-            reply_to=self._get_reply_to_for_bulk_email() or '',
-            bcc=event.settings.get('mail_bcc'),
+            reply_to=reply_to,
+            bcc=bcc,
             attachments=[form.cleaned_data['attachment'].id] if form.cleaned_data.get('attachment') else [],
             scheduled_at=scheduled_at,
         )
@@ -668,7 +738,9 @@ class ComposeTeamsMail(EventPermissionRequiredMixin, CopyDraftMixin, BulkReplyTo
         ]
         EmailQueueToUser.objects.bulk_create(recipient_objs)
 
-        if scheduled_at:
+        if action == 'draft':
+            messages.success(self.request, _('Your email draft has been saved.'))
+        elif scheduled_at:
             send_queued_mail.apply_async(args=[event.pk, mail_instance.pk], eta=scheduled_at)
             event.log_action(
                 'eventyay.sendmail.scheduled',
