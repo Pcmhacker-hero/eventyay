@@ -551,7 +551,7 @@ class RoomView(OrderActionMixin, OrgaCRUDView):
         context = super().get_context_data(**kwargs)
         if self.action == 'delete':
             room = self.get_object()
-            wip_schedule = getattr(self.request.event, 'wip_schedule', None)
+            wip_schedule = self.request.event.schedules.filter(version__isnull=True).first()
             if wip_schedule:
                 linked_talks = wip_schedule.talks.filter(room=room, submission__isnull=False)
                 if linked_talks.exists():
@@ -560,14 +560,25 @@ class RoomView(OrderActionMixin, OrgaCRUDView):
                         'Warning: This room currently has {count} scheduled session(s) linked to it. '
                         'Deleting this room will unassign those sessions from this room on the schedule.'
                     ).format(count=count)
+                    context['confirm_room_name'] = str(room.name)
         return context
 
     def delete_handler(self, request, *args, **kwargs):
         # Use soft delete to sync with video component
         obj = self.get_object()
+        wip_schedule = request.event.schedules.filter(version__isnull=True).first()
+        if wip_schedule:
+            linked_talks = wip_schedule.talks.filter(room=obj, submission__isnull=False)
+            if linked_talks.exists():
+                entered_name = request.POST.get('room_name_confirm', '').strip()
+                if entered_name != str(obj.name).strip():
+                    messages.error(request, _('The room name you entered was incorrect.'))
+                    return redirect(request.path)
+
         obj.deleted = True
         obj.save(update_fields=['deleted'])
-        request.event.wip_schedule.talks.filter(room=obj, submission__isnull=True).delete()
-        request.event.wip_schedule.talks.filter(room=obj, submission__isnull=False).update(room=None)
+        if wip_schedule:
+            wip_schedule.talks.filter(room=obj, submission__isnull=True).delete()
+            wip_schedule.talks.filter(room=obj, submission__isnull=False).update(room=None)
         messages.success(request, _('The selected room has been deleted.'))
         return redirect(self.get_success_url())

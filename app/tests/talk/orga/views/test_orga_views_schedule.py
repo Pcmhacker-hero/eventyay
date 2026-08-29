@@ -466,7 +466,18 @@ def test_delete_used_room(orga_client, event, room, slot):
     assert "Warning: This room currently has 1 scheduled session(s) linked to it." in response.text
     with scope(event=event):
         assert event.rooms.count() == 1
-    response = orga_client.post(room.urls.delete, follow=True)
+
+    # POST with incorrect room name fails to delete room
+    response = orga_client.post(room.urls.delete, {"room_name_confirm": "Wrong Room Name"}, follow=True)
+    assert response.status_code == 200
+    assert "The room name you entered was incorrect." in response.text
+    with scope(event=event):
+        assert event.rooms.count() == 1
+        slot.refresh_from_db()
+        assert slot.room == room
+
+    # POST with correct room name successfully deletes room and unassigns slot
+    response = orga_client.post(room.urls.delete, {"room_name_confirm": str(room.name)}, follow=True)
     assert response.status_code == 200
     with scope(event=event):
         assert event.rooms.count() == 0
