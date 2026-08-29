@@ -575,10 +575,11 @@ class RoomView(OrderActionMixin, OrgaCRUDView):
                     messages.error(request, _('The room name you entered was incorrect.'))
                     return redirect(request.path)
 
-        obj.deleted = True
-        obj.save(update_fields=['deleted'])
-        if wip_schedule:
-            wip_schedule.talks.filter(room=obj, submission__isnull=True).delete()
-            wip_schedule.talks.filter(room=obj, submission__isnull=False).update(room=None)
+        with transaction.atomic():
+            obj.deleted = True
+            obj.save(update_fields=['deleted'])
+            if wip_schedule:
+                wip_schedule.talks.filter(room=obj, submission__isnull=True).delete()
+                wip_schedule.talks.filter(room=obj, submission__isnull=False).update(room=None)
         messages.success(request, _('The selected room has been deleted.'))
         return redirect(self.get_success_url())
